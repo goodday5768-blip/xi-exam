@@ -269,7 +269,7 @@ const CFG = {"notice": "이 앱의 접속·시험 시작·채점 결과(이름, 
 const APP = D.title;
 // 2026-10-01 사용자 지시: 지문을 많이 골라도 한 번에 최대 20문제(모든 앱 공통). 지문 수 제한은 없애고, 회마다 고른 지문 중 20문제 안에 드는 만큼만 낸다.
 const MAXQ = 20;
-const PM = +D.pm || 90;   // 합격선(2026-10-04 사용자 지시: 수업관리 앱 모두 100점 만점 90점 이상 합격, 점수도 함께, 합격하면 선생님·학부모 문자)
+const PM = +D.pm || 90;   // 합격선(2026-10-04 사용자 지시: 수업관리 앱 모두 100점 만점 90점 이상 합격, 점수도 함께, 합격하면 선생님 문자 — 10-10부터 학부모 문자 중단)
 const pointsFor = N => { const q = Math.floor(100 / N), r = 100 - q * N; return Array.from({length: N}, (_, i) => q + (i < r ? 1 : 0)); };
 const qOf = pi => 3 + (D.P[pi].y && D.P[pi].y.length ? 1 : 0);   // 지문마다 해석·어휘·어법 3 + 유형 1(유형 문항이 있는 지문만)
 // 이번 회 지문: 아직 통과 못 한 지문 → 덜 도전한 지문 순(같으면 무작위)으로 20문제가 찰 때까지
@@ -628,7 +628,7 @@ function grade() {
     certs.push(cert); if (certs.length > 20) certs = certs.slice(-20); store.set('certs', certs);
     const txt = certText(cert);
     res.className = 'card banner pass';
-    res.innerHTML = `<div class="big">합격 · ${score}점</div><div>합격선 ${PM}점 · ${N}문제 중 ${correct}문제 정답 · ${cur.round}번째 도전에서 합격 — 선생님과 학부모님께 결과 문자가 갑니다</div>
+    res.innerHTML = `<div class="big">합격 · ${score}점</div><div>합격선 ${PM}점 · ${N}문제 중 ${correct}문제 정답 · ${cur.round}번째 도전에서 합격 — 선생님께 결과 문자가 갑니다</div>
       <div class="cert"><b>이 메시지를 선생님께 보내세요</b><textarea rows="6" readonly>${esc(txt)}</textarea><div class="row"><button id="copyCert">메시지 복사</button></div><p class="muted" id="certMsg" style="margin:6px 0 0"></p></div>` + shown;
     $('#copyCert').onclick = async () => { $('#certMsg').textContent = await copyText(txt) ? '복사했습니다. 카톡에 붙여 넣어 선생님께 보내세요.' : '복사가 막혀 있습니다. 위 메시지 칸을 길게 눌러 복사하세요.'; };
     const left = [...cur.sel].filter(pi => !(rec[D.P[pi].id] || {}).pass);   // 고른 지문 중 아직 통과 못 한 지문이 남았으면 이어서
