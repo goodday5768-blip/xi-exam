@@ -160,6 +160,7 @@ body:not(.nobrand) #submit::before{content:"";display:inline-block;width:1.35em;
   <div class="selbar"><div class="card">
     <div class="muted" id="selText">지문을 골라 주세요.</div>
     <div class="row"><button id="go" disabled style="flex:1">시험 시작</button><button class="ghost" id="clearSel">선택 해제</button></div>
+    <button class="ghost" id="wrongGo" hidden style="width:100%;margin-top:8px;font-weight:700"></button>
     <div class="muted" id="msg"></div>
   </div></div>
 </section>
@@ -292,6 +293,7 @@ const store = {
 let rec = store.get('rec', {});      // {pid: {pass, tries, at}}
 let cyc = store.get('cyc', {});      // {pid: {g:[남은 번호], t:[…], v:[…], lg, lt, lv}} — 유형별 10문항을 한 바퀴 다 쓸 때까지 반복 없음
 let log = store.get('log', []);      // 회차 기록
+let wrongs = store.get('wrongs', {});   // 2026-11-02 틀린 지문 {pid: {n, at}} — 지문의 문제를 하나라도 틀리면 담고, 다 맞히면 뺀다
 let certs = store.get('certs', []);  // 통과 메시지
 let sel = new Set(), cur = null;
 
@@ -414,7 +416,7 @@ function paintSel() {
   document.querySelectorAll('#board .grid button').forEach(b => b.classList.toggle('pick', sel.has(+b.dataset.pi)));
   const n = sel.size, all = [...sel].reduce((t, pi) => t + qOf(pi), 0), nq = all > MAXQ ? pickRound(sel).reduce((t, pi) => t + qOf(pi), 0) : all;
   $('#selText').textContent = !n ? '지문을 골라 주세요.' : `${selLabel(sel)} — ${n}지문 · ` + (all > MAXQ ? `한 번에 ${nq}문제씩(통과 못 한 지문부터)` : `${nq}문제`);
-  $('#go').disabled = !n; $('#go').textContent = n ? `시험 시작 (${nq}문제)` : '시험 시작';
+  $('#go').disabled = !n; $('#go').textContent = n ? `시험 시작 (${nq}문제)` : '시험 시작'; paintWrong();
   document.querySelectorAll('.grp').forEach((w, gi) => { const g = D.groups[gi]; w.querySelector('.grphead button').textContent = g.m.every(pi => sel.has(pi)) ? '전체 해제' : '전체'; });
 }
 
@@ -613,7 +615,7 @@ async function start() {
   const u = await UNLOCK.run(D, g, KEYST);   // 콘텐츠 보호(2026-10-06): 서버가 준(또는 저장된) 열쇠로 지문·문항을 푼다
   if (!u.ok) { $('#msg').textContent = u.msg; window.scrollTo(0, 0); return; }
   $('#msg').textContent = ''; $('#who').textContent = name + ' 학생';
-  cur = {sel: new Set(sel), key, name, round: 0, ps: null, again: false};
+  cur = {sel: new Set(sel), key, name, round: 0, ps: null, again: false, review: reviewStart}; reviewStart = false;
   $('#home').hidden = true; $('#test').hidden = false;
   newRound();
 }
@@ -624,7 +626,7 @@ $('#consentOk').onclick = () => { store.set('consent', consentId()); $('#consent
 $('#consentNo').onclick = () => { $('#consentCard').hidden = true; $('#msg').textContent = '동의하지 않으면 이 앱을 이용할 수 없습니다.'; };
 
 function newRound() {
-  if (!cur.again || !cur.ps) { cur.ps = pickRound(cur.sel); cur.rkey = selLabel(new Set(cur.ps)); }   // 불합격이면 같은 지문으로 새 문제, 통과·처음이면 다음 지문
+  if (!cur.again || !cur.ps) { cur.ps = cur.review ? pickWrong(cur.sel) : pickRound(cur.sel); if (!cur.ps.length) { renderHome(); $('#msg').textContent = '틀린 지문을 모두 맞혔습니다!'; return; } cur.rkey = (cur.review ? '틀린 지문 다시 · ' : '') + selLabel(new Set(cur.ps)); }   // 불합격이면 같은 지문으로 새 문제, 통과·처음이면 다음 지문
   cur.again = false;
   cur.qs = makeRound(cur.ps); cur.ansd = cur.qs.map(() => -1); cur.round++; cur.t0 = Date.now(); cur.stage = 2; cur.pts = pointsFor(cur.qs.length);
   const n2 = cur.qs.filter(q => q.stage === 2).length, n1 = cur.qs.length - n2;
@@ -669,6 +671,9 @@ function grade() {
   log.push({at, key: cur.rkey, pass, score, correct, n: N, sec, wrong}); saveLog();
   cur.ps.forEach(pi => { const id = D.P[pi].id, r = rec[id] || (rec[id] = {tries: 0}); r.tries++; if (pass) { r.pass = true; r.at = at; } });
   store.set('rec', rec);
+  cur.ps.forEach(pi => { const id = D.P[pi].id, bad = cur.qs.some((q, qi) => q.pi === pi && cur.ansd[qi] !== q.ans); if (bad) wrongs[id] = {n: ((wrongs[id] || {}).n || 0) + 1, at}; else delete wrongs[id]; });
+  { const ks = Object.keys(wrongs); if (ks.length > 300) ks.sort((a, b) => wrongs[a].at > wrongs[b].at ? 1 : -1).slice(0, ks.length - 300).forEach(k => delete wrongs[k]); }
+  store.set('wrongs', wrongs);
   const wt = {해석: 0, 어휘: 0, 어법: 0, 유형: 0}; wrong.forEach(w => wt[w.type]++);
   report('grade', {name: cur.name, range: cur.rkey, score, correct, total: N, tries: cur.round, dur: fmtDur(sec), pass, pm: PM,
     wrong: wrong.length ? `해석 ${wt.해석} · 어휘 ${wt.어휘} · 어법 ${wt.어법} · 유형 ${wt.유형}` : '없음', wrongItems: wrong.slice(0, 12).map(w => `${w.where} ${w.type}: 내 답 ${w.mine} / 정답 ${w.ans}`).join('\n')});
@@ -682,7 +687,7 @@ function grade() {
     res.innerHTML = `<div class="big">합격 · ${score}점</div><div>합격선 ${PM}점 · ${N}문제 중 ${correct}문제 정답 · ${cur.round}번째 도전에서 합격</div>
       <div class="cert"><b>이 메시지를 선생님께 보내세요</b><textarea rows="6" readonly>${esc(txt)}</textarea><div class="row"><button id="copyCert">메시지 복사</button></div><p class="muted" id="certMsg" style="margin:6px 0 0"></p></div>` + shown;
     $('#copyCert').onclick = async () => { $('#certMsg').textContent = await copyText(txt) ? '복사했습니다. 카톡에 붙여 넣어 선생님께 보내세요.' : '복사가 막혀 있습니다. 위 메시지 칸을 길게 눌러 복사하세요.'; };
-    const left = [...cur.sel].filter(pi => !(rec[D.P[pi].id] || {}).pass);   // 고른 지문 중 아직 통과 못 한 지문이 남았으면 이어서
+    const left = cur.review ? pickWrong(cur.sel) : [...cur.sel].filter(pi => !(rec[D.P[pi].id] || {}).pass);   // 고른 지문 중 아직 통과 못 한 지문이 남았으면 이어서
     if (left.length) { $('#next').textContent = `남은 ${left.length}지문 이어서 풀기`; $('#next').onclick = () => { cur.round = 0; newRound(); }; }
     else { $('#next').textContent = '지문 선택으로'; $('#next').onclick = () => { sel = new Set(); renderHome(); }; }
   } else {
@@ -694,7 +699,14 @@ function grade() {
 }
 
 $('#submit').onclick = grade;
-$('#go').onclick = start;
+$('#go').onclick = () => { reviewStart = false; start(); };
+// 2026-11-02 틀린 지문 다시 풀기: 많이 틀린 지문·최근 틀린 지문부터 한 번에 MAXQ 문제까지
+let reviewStart = false;
+const PIX = {}; D.P.forEach((p, i) => PIX[p.id] = i);
+function wrongPis() { return Object.keys(wrongs).filter(id => id in PIX).sort((a, b) => wrongs[b].n - wrongs[a].n || (wrongs[b].at > wrongs[a].at ? 1 : wrongs[b].at < wrongs[a].at ? -1 : 0)).map(id => PIX[id]); }
+function pickWrong(s) { const out = []; let t = 0; for (const pi of wrongPis()) if (s.has(pi) && (!out.length || t + qOf(pi) <= MAXQ)) { out.push(pi); t += qOf(pi); } return out.sort((a, b) => a - b); }
+function paintWrong() { const b = $('#wrongGo'); if (!b) return; const w = wrongPis(); b.hidden = !w.length; b.textContent = `틀린 지문 다시 풀기 (${w.length}지문)`; }
+$('#wrongGo').onclick = () => { const w = wrongPis(); if (!w.length) return; sel = new Set(w); paintSel(); reviewStart = true; start(); };
 $('#clearSel').onclick = () => { sel = new Set(); paintSel(); };
 $('#logMore').onclick = () => { logLimit += 30; renderLog(); };
 $('#home2').onclick = () => {
